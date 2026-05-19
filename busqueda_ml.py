@@ -3,6 +3,7 @@ import sys
 import os
 import time
 import json
+import atexit
 from datetime import datetime
 
 import undetected_chromedriver as uc
@@ -356,11 +357,15 @@ def main():
     except Exception as e:
         print(f"\nError: {e}")
 
-    # Suprimir errores de limpieza interna de undetected_chromedriver al cerrar
-    sys.stderr = open(os.devnull, "w")
     input("\nPresiona Enter para salir...")
-    sys.stderr = sys.__stderr__
 
+
+def _suprimir_errores_salida():
+    devnull = open(os.devnull, "w")
+    sys.stderr = devnull
+
+
+atexit.register(_suprimir_errores_salida)
 
 if __name__ == "__main__":
     main()
