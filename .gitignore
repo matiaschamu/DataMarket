@@ -1,0 +1,19 @@
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Resultados de búsqueda
+ML_*.csv
+
+# Tokens y credenciales
+.ml_token.json
+
+# Sistema
+.DS_Store
+Thumbs.db
