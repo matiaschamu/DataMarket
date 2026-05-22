@@ -1,16 +1,26 @@
-# Buscador MercadoLibre Argentina → CSV
+# DataMarket
 
-Herramienta de escritorio que busca artículos en [MercadoLibre Argentina](https://www.mercadolibre.com.ar) y exporta los resultados a un archivo CSV listo para analizar en Excel, Python, etc.
+Suite de herramientas de escritorio para buscar artículos en múltiples plataformas de e-commerce y exportar los resultados a CSV, listos para analizar en Excel, Python, etc.
+
+---
+
+## Plataformas disponibles
+
+| Herramienta | Plataforma | Ejecutable |
+|---|---|---|
+| Buscador MercadoLibre | [MercadoLibre Argentina](https://www.mercadolibre.com.ar) | `Busqueda MercadoLibre.exe` |
+| Buscador AliExpress | [AliExpress](https://es.aliexpress.com) | `Busqueda AliExpress.exe` |
+| Buscador Amazon | [Amazon Argentina](https://www.amazon.com.ar) | `Busqueda Amazon.exe` |
 
 ---
 
 ## Requisitos
 
 - Windows 10 / 11
-- **Google Chrome instalado** (el programa lo usa internamente)
+- **Google Chrome instalado** (los programas lo usan internamente)
 - Conexión a internet
 
-No requiere Python ni ninguna otra dependencia — el `.exe` es autocontenido.
+No requiere Python ni ninguna otra dependencia — cada `.exe` es autocontenido.
 
 ---
 
@@ -18,37 +28,46 @@ No requiere Python ni ninguna otra dependencia — el `.exe` es autocontenido.
 
 ### Opción A — Doble clic
 
-Hacé doble clic en `BusquedaMercadoLibre.exe`. El programa te va a pedir:
+Hacé doble clic en el `.exe` correspondiente. El programa te va a pedir:
 
-1. **Frase de búsqueda** — lo mismo que escribirías en MercadoLibre (ej: `ssd`, `zapatillas nike`, `notebook gamer`)
+1. **Frase de búsqueda** — lo mismo que escribirías en la plataforma (ej: `ssd`, `zapatillas nike`, `canilla acero`)
 2. **Cantidad de resultados** — entre 1 y 1000. Presioná Enter para traer el máximo (1000)
 
 ### Opción B — Desde terminal (con argumento)
 
 ```
-BusquedaMercadoLibre.exe zapatillas nike
+"Busqueda MercadoLibre.exe" zapatillas nike
+"Busqueda AliExpress.exe" canilla acero
+"Busqueda Amazon.exe" auriculares bluetooth
 ```
 
 En este modo también te pregunta la cantidad de resultados.
 
 ---
 
-## Qué hace el programa
+## Qué hace cada programa
 
 1. Abre Chrome en segundo plano (ventana minimizada)
-2. Navega por las páginas de resultados de MercadoLibre automáticamente
+2. Navega por las páginas de resultados automáticamente
 3. Extrae los datos de cada artículo
 4. Cierra Chrome
 5. Guarda un `.csv` en la misma carpeta que el `.exe`
 
-El archivo se llama `ML_[busqueda]_[fecha_hora].csv`, por ejemplo:
+---
+
+## Archivos de salida
+
+Los archivos CSV se nombran con prefijo de plataforma, búsqueda y fecha/hora:
+
 ```
-ML_ssd_20260519_143022.csv
+ML_zapatillas_nike_20260522_143022.csv   ← MercadoLibre
+AE_canilla_acero_20260522_151927.csv     ← AliExpress
+AZ_auriculares_bluetooth_20260522_160500.csv  ← Amazon
 ```
 
 ---
 
-## Datos que exporta
+## Datos que exporta — MercadoLibre
 
 | Columna | Descripción |
 |---|---|
@@ -67,15 +86,55 @@ ML_ssd_20260519_143022.csv
 | `valor_cuota` | Monto por cuota |
 | `rating` | Calificación promedio (ej: 4.8) |
 | `cantidad_reseñas` | Número total de reseñas |
-| `link` | URL del artículo en MercadoLibre |
+| `link` | URL del artículo |
+| `thumbnail` | URL de la imagen principal |
+
+---
+
+## Datos que exporta — AliExpress
+
+| Columna | Descripción |
+|---|---|
+| `titulo` | Nombre del artículo |
+| `badge` | Etiqueta destacada (ej: "Top ventas", "Ahorra $X") |
+| `precio_usd` | Precio de venta |
+| `precio_original_usd` | Precio antes del descuento (si aplica) |
+| `costo_envio` | Costo de envío (0 si es gratis) |
+| `envio_gratis` | Si / No |
+| `tiempo_envio` | Estimación de entrega |
+| `pedidos` | Cantidad de ventas (ej: "4.000+ vendidos") |
+| `rating` | Calificación promedio (ej: 4.8) |
+| `cantidad_reseñas` | Número total de reseñas |
+| `vendedor` | Nombre de la tienda |
+| `link` | URL del artículo |
+| `thumbnail` | URL de la imagen principal |
+
+---
+
+## Datos que exporta — Amazon
+
+| Columna | Descripción |
+|---|---|
+| `titulo` | Nombre del artículo |
+| `badge` | Etiqueta destacada (ej: "Más vendido", "Amazon's Choice") |
+| `precio` | Precio de venta (ARS) |
+| `precio_original` | Precio antes del descuento (si aplica) |
+| `descuento` | Porcentaje de descuento (ej: -30%) |
+| `envio_gratis` | Si / No |
+| `prime` | Si / No (envío Prime) |
+| `rating` | Calificación promedio (ej: 4.5) |
+| `cantidad_reseñas` | Número total de reseñas |
+| `vendedor` | Nombre del vendedor |
+| `link` | URL del artículo |
 | `thumbnail` | URL de la imagen principal |
 
 ---
 
 ## Límites
 
-- **Máximo 1000 resultados por búsqueda** — es el límite que impone MercadoLibre independientemente de cuántos resultados existan en total.
-- El programa muestra el total real que encontró MercadoLibre antes de empezar a traer resultados.
+- **Máximo 1000 resultados por búsqueda** en todas las plataformas.
+- El programa muestra el total real que encontró la plataforma antes de empezar.
+- Amazon puede solicitar verificación CAPTCHA — el programa pausa y avisa para resolverla manualmente.
 
 ---
 
@@ -83,35 +142,76 @@ ML_ssd_20260519_143022.csv
 
 ```
 ==================================================
-  Buscador MercadoLibre Argentina -> CSV
+  Buscador Amazon -> CSV
 ==================================================
 
-Ingresa la frase de busqueda: ssd
-Cuantos resultados queres traer? (1-1000, Enter para 1000): 200
+Ingresa la frase de busqueda: auriculares bluetooth
+Cuantos resultados queres traer? (1-1000, Enter para 1000): 50
 
-Buscando: 'ssd'
+Buscando: 'auriculares bluetooth'
 --------------------------------------------------
 Iniciando navegador...
-MercadoLibre encontro: 5.517 resultados
-Vamos a traer: 200
+Amazon encontro: 1.240 resultados
+Vamos a traer: 50
 
-[####################] 200/200 (100%)
+[####################] 50/50 (100%)
 
-200 articulos guardados en:
-  C:\Users\...\ML_ssd_20260519_143022.csv
+50 articulos guardados en:
+  C:\Users\...\AZ_auriculares_bluetooth_20260522_160500.csv
 
 Presiona Enter para salir...
 ```
 
 ---
 
+## Estructura del proyecto
+
+```
+DataMarket/
+├── README.md
+├── mercadolibre/
+│   ├── busqueda_ml.py
+│   ├── BusquedaMercadoLibre.spec
+│   ├── icono/
+│   │   └── Mercado.ico
+│   └── dist/
+│       └── Busqueda MercadoLibre.exe
+├── aliexpress/
+│   ├── busqueda_aliexpress.py
+│   ├── BusquedaAliExpress.spec
+│   ├── icono/
+│   │   └── Aliexpress.ico
+│   └── dist/
+│       └── Busqueda AliExpress.exe
+└── amazon/
+    ├── busqueda_amazon.py
+    ├── BusquedaAmazon.spec
+    ├── Icono/
+    │   └── Amazon.ico
+    └── dist/
+        └── Busqueda Amazon.exe
+```
+
+---
+
 ## Compilar desde el código fuente
 
-Si querés modificar el script y regenerar el `.exe`:
+Desde la carpeta de cada plataforma:
 
 ```bash
 pip install selenium undetected-chromedriver pyinstaller
-pyinstaller --onefile --console --name "BusquedaMercadoLibre" --hidden-import undetected_chromedriver busqueda_ml.py
+
+# MercadoLibre
+cd mercadolibre
+python -m PyInstaller BusquedaMercadoLibre.spec --noconfirm
+
+# AliExpress
+cd aliexpress
+python -m PyInstaller BusquedaAliExpress.spec --noconfirm
+
+# Amazon
+cd amazon
+python -m PyInstaller BusquedaAmazon.spec --noconfirm
 ```
 
-El ejecutable queda en la carpeta `dist/`.
+El ejecutable queda en la carpeta `dist/` de cada módulo.

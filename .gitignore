@@ -1,7 +1,6 @@
 # PyInstaller
 build/
 dist/
-*.spec
 
 # Python
 __pycache__/
@@ -10,9 +9,18 @@ __pycache__/
 
 # Resultados de búsqueda
 ML_*.csv
+AE_*.csv
+AZ_*.csv
+
+# Debug
+debug_*.json
+debug_*.html
 
 # Tokens y credenciales
 .ml_token.json
+
+# Claude
+.claude/
 
 # Sistema
 .DS_Store
