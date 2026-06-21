@@ -12,6 +12,14 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 
+def directorio_base() -> str:
+    return os.path.dirname(os.path.abspath(sys.argv[0]))
+
+
+def ruta_perfil() -> str:
+    return os.path.join(directorio_base(), ".perfil_chrome")
+
+
 def crear_driver() -> uc.Chrome:
     patron = os.path.join(os.path.expanduser("~"), "appdata", "roaming",
                           "undetected_chromedriver", "undetected_chromedriver.exe")
@@ -25,7 +33,33 @@ def crear_driver() -> uc.Chrome:
     opciones.add_argument("--window-size=1920,1080")
     opciones.add_argument("--start-minimized")
     opciones.add_argument("--lang=es-AR,es")
+    opciones.add_argument("--no-first-run")
+    opciones.add_argument("--no-default-browser-check")
+    # Perfil propio y persistente: la sesion iniciada queda guardada entre
+    # busquedas, asi solo hay que iniciar sesion manualmente la primera vez.
+    opciones.add_argument(f"--user-data-dir={ruta_perfil()}")
     return uc.Chrome(options=opciones, use_subprocess=True, version_main=148)
+
+
+def esperar_login_manual(driver) -> None:
+    """Abre Amazon y espera a que el usuario confirme que esta logueado."""
+    try:
+        driver.maximize_window()
+        driver.get("https://www.amazon.com.ar/")
+    except Exception:
+        pass
+
+    print("\n" + "=" * 55)
+    print("  Se abrio Amazon en el navegador.")
+    print("  Revisa que estes logueado (inicia sesion si hace falta).")
+    print("=" * 55)
+    input("\n  Cuando estes listo, presiona Enter para continuar...")
+
+    try:
+        driver.minimize_window()
+    except Exception:
+        pass
+    print()
 
 
 def url_busqueda(frase: str, pagina: int) -> str:
@@ -284,6 +318,8 @@ def buscar_articulos(frase: str, max_resultados: int) -> list[dict]:
     total_az = 0
 
     try:
+        esperar_login_manual(driver)
+
         pagina = 1
         while len(articulos) < max_resultados:
             url = url_busqueda(frase, pagina)
