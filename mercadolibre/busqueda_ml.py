@@ -7,6 +7,7 @@ import atexit
 from datetime import datetime
 
 import undetected_chromedriver as uc
+from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -14,9 +15,17 @@ from selenium.webdriver.support import expected_conditions as EC
 ITEMS_POR_PAGINA = 48
 
 
+def directorio_base() -> str:
+    return os.path.dirname(os.path.abspath(sys.argv[0]))
+
+
+def ruta_perfil() -> str:
+    return os.path.join(directorio_base(), ".perfil_chrome")
+
+
 def crear_driver() -> uc.Chrome:
     # Eliminar el binario cacheado para evitar el error "archivo ya existe"
-    import glob, shutil
+    import glob
     patron = os.path.join(os.path.expanduser("~"), "appdata", "roaming",
                           "undetected_chromedriver", "undetected_chromedriver.exe")
     if os.path.exists(patron):
@@ -28,7 +37,33 @@ def crear_driver() -> uc.Chrome:
     opciones = uc.ChromeOptions()
     opciones.add_argument("--window-size=1920,1080")
     opciones.add_argument("--start-minimized")
+    opciones.add_argument("--no-first-run")
+    opciones.add_argument("--no-default-browser-check")
+    # Perfil propio y persistente: la sesion iniciada queda guardada entre
+    # busquedas, asi solo hay que iniciar sesion manualmente la primera vez.
+    opciones.add_argument(f"--user-data-dir={ruta_perfil()}")
     return uc.Chrome(options=opciones, use_subprocess=True, version_main=148)
+
+
+def esperar_login_manual(driver) -> None:
+    """Abre MercadoLibre y espera a que el usuario confirme que esta logueado."""
+    try:
+        driver.maximize_window()
+        driver.get("https://www.mercadolibre.com.ar/")
+    except Exception:
+        pass
+
+    print("\n" + "=" * 55)
+    print("  Se abrio MercadoLibre en el navegador.")
+    print("  Revisa que estes logueado (inicia sesion si hace falta).")
+    print("=" * 55)
+    input("\n  Cuando estes listo, presiona Enter para continuar...")
+
+    try:
+        driver.minimize_window()
+    except Exception:
+        pass
+    print()
 
 
 def url_busqueda(frase: str, desde: int) -> str:
@@ -252,6 +287,8 @@ def buscar_articulos(frase: str, max_resultados: int) -> list[dict]:
     total_ml = 0
 
     try:
+        esperar_login_manual(driver)
+
         for desde in range(0, max_resultados, ITEMS_POR_PAGINA):
             url = url_busqueda(frase, desde)
             items = extraer_pagina(driver, url)

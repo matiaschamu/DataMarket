@@ -18,6 +18,9 @@ debug_*.html
 # Tokens y credenciales
 .ml_token.json
 
+# Perfil de Chrome persistente (cookies / sesion)
+.perfil_chrome/
+
 # Claude
 .claude/
 
