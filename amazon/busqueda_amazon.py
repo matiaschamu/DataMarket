@@ -380,7 +380,7 @@ def guardar_csv(articulos: list[dict], frase: str) -> str:
     ]
 
     with open(ruta, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=campos, delimiter=";")
+        writer = csv.DictWriter(f, fieldnames=campos)
         writer.writeheader()
         writer.writerows(articulos)
 
