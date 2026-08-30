@@ -698,7 +698,7 @@ def guardar_csv(articulos: list[dict], frase: str) -> str:
     script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     nombre_seguro = "".join(c if c.isalnum() or c in " _-" else "_" for c in frase)[:50].strip()
-    nombre_archivo = f"AE_{nombre_seguro}_{timestamp}.csv"
+    nombre_archivo = f"{timestamp}_AE_{nombre_seguro}.csv"
     ruta = os.path.join(script_dir, nombre_archivo)
 
     campos = [

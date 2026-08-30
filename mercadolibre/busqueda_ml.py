@@ -104,6 +104,9 @@ def extraer_pagina(driver: webdriver.Chrome, url: str) -> list[dict]:
                     break
         item["envio_gratis"] = dom.get("envio_gratis", "")
         item["condicion"] = dom.get("condicion", "")
+        item["vendedor_nickname"] = dom.get("vendedor_nickname", "")
+        item["cuotas"] = dom.get("cuotas", "")
+        item["valor_cuota"] = dom.get("valor_cuota", "")
         resultado.append(item)
 
     if not resultado:
@@ -224,6 +227,26 @@ def _parsear_items_dom(driver: webdriver.Chrome) -> list[dict]:
                     condicion = elems[0].text.strip()
                     break
 
+            vendedor = ""
+            for sel in [
+                ".poly-component__seller",
+                ".ui-search-official-store-label",
+                ".ui-search-item__brand-discoverability__title",
+            ]:
+                elems = tarjeta.find_elements(By.CSS_SELECTOR, sel)
+                if elems:
+                    vendedor = elems[0].text.strip()
+                    if vendedor:
+                        break
+
+            cuotas_texto = ""
+            valor_cuota_texto = ""
+            for sel in [".poly-component__installments", ".ui-search-installments"]:
+                elems = tarjeta.find_elements(By.CSS_SELECTOR, sel)
+                if elems:
+                    cuotas_texto = elems[0].text.strip()
+                    break
+
             link = ""
             for sel in [".poly-component__title a", ".ui-search-item__title-label-grid a", "h2 a", "h3 a", "a.ui-search-link"]:
                 elems = tarjeta.find_elements(By.CSS_SELECTOR, sel)
@@ -253,9 +276,9 @@ def _parsear_items_dom(driver: webdriver.Chrome) -> list[dict]:
                 "cantidad_vendida": "",
                 "disponibles": "",
                 "vendedor_id": "",
-                "vendedor_nickname": "",
-                "cuotas": "",
-                "valor_cuota": "",
+                "vendedor_nickname": vendedor,
+                "cuotas": cuotas_texto,
+                "valor_cuota": valor_cuota_texto,
                 "link": link,
                 "thumbnail": thumbnail,
             })
@@ -334,7 +357,7 @@ def guardar_csv(articulos: list[dict], frase: str) -> str:
     script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     nombre_seguro = "".join(c if c.isalnum() or c in " _-" else "_" for c in frase)[:50].strip()
-    nombre_archivo = f"ML_{nombre_seguro}_{timestamp}.csv"
+    nombre_archivo = f"{timestamp}_ML_{nombre_seguro}.csv"
     ruta = os.path.join(script_dir, nombre_archivo)
 
     campos = [
