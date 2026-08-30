@@ -23,6 +23,21 @@ def ruta_perfil() -> str:
     return os.path.join(directorio_base(), ".perfil_chrome")
 
 
+def detectar_version_principal_chrome() -> int | None:
+    """Detecta la version instalada para descargar el ChromeDriver compatible."""
+    try:
+        ejecutable = uc.find_chrome_executable()
+        carpeta = os.path.dirname(ejecutable)
+        versiones = [
+            int(nombre.split(".", 1)[0])
+            for nombre in os.listdir(carpeta)
+            if "." in nombre and nombre.split(".", 1)[0].isdigit()
+        ]
+        return max(versiones, default=None)
+    except Exception:
+        return None
+
+
 def crear_driver() -> uc.Chrome:
     # Eliminar el binario cacheado para evitar el error "archivo ya existe"
     import glob
@@ -42,7 +57,11 @@ def crear_driver() -> uc.Chrome:
     # Perfil propio y persistente: la sesion iniciada queda guardada entre
     # busquedas, asi solo hay que iniciar sesion manualmente la primera vez.
     opciones.add_argument(f"--user-data-dir={ruta_perfil()}")
-    return uc.Chrome(options=opciones, use_subprocess=True, version_main=148)
+    return uc.Chrome(
+        options=opciones,
+        use_subprocess=True,
+        version_main=detectar_version_principal_chrome(),
+    )
 
 
 def esperar_login_manual(driver) -> None:

@@ -5,6 +5,7 @@ import re
 import time
 import json
 import atexit
+import unicodedata
 from datetime import datetime
 
 import undetected_chromedriver as uc
@@ -19,6 +20,21 @@ def directorio_base() -> str:
 
 def ruta_perfil() -> str:
     return os.path.join(directorio_base(), ".perfil_chrome")
+
+
+def detectar_version_principal_chrome() -> int | None:
+    """Detecta la version instalada para descargar el ChromeDriver compatible."""
+    try:
+        ejecutable = uc.find_chrome_executable()
+        carpeta = os.path.dirname(ejecutable)
+        versiones = [
+            int(nombre.split(".", 1)[0])
+            for nombre in os.listdir(carpeta)
+            if "." in nombre and nombre.split(".", 1)[0].isdigit()
+        ]
+        return max(versiones, default=None)
+    except Exception:
+        return None
 
 
 def crear_driver() -> uc.Chrome:
@@ -39,7 +55,11 @@ def crear_driver() -> uc.Chrome:
     # Perfil propio y persistente: la sesion iniciada queda guardada entre
     # busquedas, asi solo hay que iniciar sesion manualmente la primera vez.
     opciones.add_argument(f"--user-data-dir={ruta_perfil()}")
-    return uc.Chrome(options=opciones, use_subprocess=True, version_main=148)
+    return uc.Chrome(
+        options=opciones,
+        use_subprocess=True,
+        version_main=detectar_version_principal_chrome(),
+    )
 
 
 def esperar_login_manual(driver) -> None:
@@ -68,7 +88,40 @@ def url_busqueda(frase: str, pagina: int) -> str:
     return f"https://es.aliexpress.com/w/wholesale-{termino}.html?page={pagina}&sortType=total_tranpro_desc&currency=USD"
 
 
+def _carpeta_captura(driver) -> str:
+    """Carpeta única de la ejecución para poder analizar la respuesta offline."""
+    run_id = getattr(driver, "_debug_run_id", None)
+    if not run_id:
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        driver._debug_run_id = run_id
+    carpeta = os.path.join(directorio_base(), "debug_aliexpress", run_id)
+    os.makedirs(carpeta, exist_ok=True)
+    return carpeta
+
+
+def _guardar_respuesta_html(driver, pagina: int) -> None:
+    try:
+        ruta = os.path.join(_carpeta_captura(driver), f"pagina_{pagina:03d}.html")
+        with open(ruta, "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
+    except Exception as e:
+        print(f"[DEBUG] No se pudo guardar el HTML: {e}")
+
+
+def _guardar_respuesta_json(driver, data: dict) -> None:
+    try:
+        pagina = int(getattr(driver, "_debug_page", 1))
+        ruta = os.path.join(_carpeta_captura(driver), f"pagina_{pagina:03d}.json")
+        with open(ruta, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[DEBUG] No se pudo guardar el JSON: {e}")
+
+
 def extraer_pagina(driver: uc.Chrome, url: str) -> list[dict]:
+    pagina_match = re.search(r"[?&]page=(\d+)", url)
+    pagina = int(pagina_match.group(1)) if pagina_match else 1
+    driver._debug_page = pagina
     driver.get(url)
     try:
         WebDriverWait(driver, 20).until(
@@ -85,6 +138,8 @@ def extraer_pagina(driver: uc.Chrome, url: str) -> list[dict]:
     time.sleep(2)
     driver.execute_script("window.scrollTo(0, 0);")
     time.sleep(1)
+
+    _guardar_respuesta_html(driver, pagina)
 
     items = _parsear_runparams(driver)
     if not items:
@@ -204,11 +259,202 @@ def _extraer_numero_de_formato(item: dict, rutas: list) -> str:
     return ""
 
 
+def _normalizar_texto_badge(valor: object) -> str:
+    """Normaliza textos/codigos internos para reconocer programas de AliExpress."""
+    if valor is None:
+        return ""
+    texto = unicodedata.normalize("NFKD", str(valor))
+    texto = "".join(c for c in texto if not unicodedata.combining(c)).lower()
+    return re.sub(r"[^a-z0-9+]+", " ", texto).strip()
+
+
+def _nombre_badge(valor: object) -> str:
+    """Convierte nombres internos como choice_atm en etiquetas legibles."""
+    texto = _normalizar_texto_badge(valor)
+    compacto = texto.replace(" ", "")
+    if not texto:
+        return ""
+
+    # Las insignias que son imagen no tienen tagText. En esos casos AliExpress
+    # conserva el nombre del programa en sellingPoints[].source.
+    if "choice" in compacto:
+        return "Choice"
+    if any(x in compacto for x in ("superdeal", "topdeal")):
+        return "SuperDeals"
+    if any(x in compacto for x in ("brands+", "brand+", "brandsplus", "brandplus")):
+        return "Brands+"
+    if any(x in compacto for x in ("bundledeal", "pick3", "dollarexpress")):
+        return "Bundle Deals"
+    if "bigsale" in compacto:
+        return "Big Sale"
+    if any(x in compacto for x in ("welcomedeal", "newuserdeal", "newshopper")):
+        return "Welcome Deal"
+    if "limiteddeal" in compacto:
+        return "Limited Deal"
+    if "flashdeal" in compacto:
+        return "Flash Deal"
+    return ""
+
+
+def _es_texto_logistica(valor: object) -> bool:
+    texto = _normalizar_texto_badge(valor)
+    return any(x in texto for x in (
+        "free shipping", "shipping fee", "envio gratis", "costo de envio",
+        "entrega gratis", "delivery", "freight", "logistic",
+    ))
+
+
+def _extraer_badge_item(item: dict) -> str:
+    """Extrae una o más insignias aun cuando AliExpress las renderiza como imagen."""
+    badges = []
+    textos_promocionales = []
+
+    valor_choice = _buscar_en_rutas(item, [
+        ["trace", "custom", "utLogMap", "isChoice"],
+        ["trace", "utLogMap", "isChoice"],
+        ["utLogMap", "isChoice"],
+        ["isChoice"],
+    ])
+    choice_explicito = None
+    if valor_choice is not None:
+        normalizado = _normalizar_texto_badge(valor_choice)
+        if normalizado in ("true", "1", "yes", "si"):
+            choice_explicito = True
+        elif normalizado in ("false", "0", "no"):
+            choice_explicito = False
+
+    def agregar(nombre: str) -> None:
+        if nombre == "Choice" and choice_explicito is False:
+            return
+        if nombre and nombre not in badges:
+            badges.append(nombre)
+
+    if choice_explicito is True:
+        agregar("Choice")
+
+    # Campos explícitos usados por distintas versiones del buscador.
+    for valor in (
+        _buscar_en_rutas(item, [["evaluation", "tag"]]),
+        item.get("badge"),
+        _buscar_en_rutas(item, [["labels", 0, "labelText"]]),
+        item.get("productType"),
+    ):
+        if isinstance(valor, str):
+            agregar(_nombre_badge(valor))
+            if (valor.strip() and not _es_texto_logistica(valor)
+                    and valor.lower() not in ("general", "normal", "default", "common", "natural")):
+                textos_promocionales.append(valor.strip())
+
+    for punto in (item.get("sellingPoints") or []):
+        if not isinstance(punto, dict):
+            continue
+        contenido = punto.get("tagContent") or {}
+        if not isinstance(contenido, dict):
+            contenido = {}
+
+        # source es la señal más estable para badges gráficos (ej. choice_atm).
+        valores = [
+            punto.get("source"), punto.get("sellingPointTagId"),
+            punto.get("resourceCode"), contenido.get("tagText"),
+            contenido.get("tagTitle"), contenido.get("alt"),
+            contenido.get("title"), contenido.get("tagImgUrl"),
+        ]
+        for valor in valores:
+            agregar(_nombre_badge(valor))
+
+        texto = contenido.get("tagText") or contenido.get("tagTitle") or ""
+        if texto and not _es_texto_logistica(texto):
+            textos_promocionales.append(str(texto).strip())
+
+    if badges:
+        return " | ".join(badges)
+
+    # Mantener compatibilidad con promos textuales desconocidas, sin confundir
+    # envío/descuentos logísticos con la insignia principal del artículo.
+    for texto in textos_promocionales:
+        if texto:
+            return texto
+    return ""
+
+
+def _extraer_badge_dom(elemento, texto: str = "") -> str:
+    """Busca badges visibles o imágenes con alt/title en una tarjeta del DOM."""
+    candidatos = [texto]
+    try:
+        elementos = elemento.find_elements(
+            By.CSS_SELECTOR, "[class*='tag'], [class*='badge'], img"
+        )
+        for elem in elementos:
+            for atributo in ("alt", "title", "aria-label", "src", "class"):
+                valor = elem.get_attribute(atributo)
+                if valor:
+                    candidatos.append(valor)
+            try:
+                if elem.text:
+                    candidatos.append(elem.text)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    encontrados = []
+    for candidato in candidatos:
+        nombre = _nombre_badge(candidato)
+        if nombre and nombre not in encontrados:
+            encontrados.append(nombre)
+    return " | ".join(encontrados)
+
+
+def _guardar_debug_badges(driver, items_raw: list[dict]) -> None:
+    """Guarda sólo las señales usadas para auditar badges de una búsqueda real."""
+    diagnostico = []
+    for item in items_raw:
+        try:
+            titulo_obj = item.get("title") or {}
+            titulo = (titulo_obj.get("displayTitle", "")
+                      if isinstance(titulo_obj, dict) else str(titulo_obj or ""))
+            puntos = []
+            for punto in (item.get("sellingPoints") or []):
+                if not isinstance(punto, dict):
+                    continue
+                contenido = punto.get("tagContent") or {}
+                puntos.append({
+                    "source": punto.get("source"),
+                    "sellingPointTagId": punto.get("sellingPointTagId"),
+                    "displayTagType": contenido.get("displayTagType") if isinstance(contenido, dict) else None,
+                    "tagText": contenido.get("tagText") if isinstance(contenido, dict) else None,
+                    "tagImgUrl": contenido.get("tagImgUrl") if isinstance(contenido, dict) else None,
+                })
+            diagnostico.append({
+                "productId": item.get("productId") or item.get("itemId"),
+                "titulo": titulo,
+                "badge_extraido": _extraer_badge_item(item),
+                "isChoice": _buscar_en_rutas(item, [
+                    ["trace", "custom", "utLogMap", "isChoice"],
+                    ["trace", "utLogMap", "isChoice"],
+                    ["utLogMap", "isChoice"],
+                    ["isChoice"],
+                ]),
+                "sellingPoints": puntos,
+            })
+        except Exception:
+            continue
+
+    try:
+        ruta = os.path.join(_carpeta_captura(driver), "debug_badges.json")
+        with open(ruta, "w", encoding="utf-8") as f:
+            json.dump(diagnostico, f, ensure_ascii=False, indent=2)
+        print(f"[DEBUG] Badges guardados en: {ruta}")
+    except Exception:
+        pass
+
+
 def _parsear_runparams(driver: uc.Chrome) -> list[dict]:
     resultado = []
     data = _extraer_runparams(driver)
     if data is None:
         return []
+    _guardar_respuesta_json(driver, data)
 
     # AliExpress anida los items en distintas rutas dependiendo de la versión
     items_raw = []
@@ -349,24 +595,7 @@ def _parsear_runparams(driver: uc.Chrome) -> list[dict]:
                 costo_envio = "0"
 
             # --- BADGE ---
-            badge = (_buscar_en_rutas(item, [
-                ["evaluation", "tag"],
-                ["badge"],
-                ["labels", 0, "labelText"],
-            ]) or "")
-            if badge and str(badge).lower() in ("general", "normal", "default", "common"):
-                badge = ""
-            # Buscar badge en sellingPoints si todavía no hay uno
-            if not badge:
-                for sp in (item.get("sellingPoints") or []):
-                    try:
-                        t = (sp.get("tagContent", {}) or {}).get("tagText", "") or sp.get("tagText", "") or ""
-                        t = t.strip()
-                        if t and t.lower() not in ("free shipping", "envío gratis"):
-                            badge = t
-                            break
-                    except Exception:
-                        pass
+            badge = _extraer_badge_item(item)
 
             # --- TITULO ---
             titulo_obj = item.get("title") or {}
@@ -422,6 +651,11 @@ def _parsear_runparams(driver: uc.Chrome) -> list[dict]:
         except Exception:
             continue
 
+    # Acumular todas las páginas de esta ejecución en un único diagnóstico.
+    acumulados = getattr(driver, "_debug_badges_items", [])
+    acumulados.extend(items_raw)
+    driver._debug_badges_items = acumulados
+    _guardar_debug_badges(driver, acumulados)
     return resultado
 
 
@@ -472,7 +706,7 @@ def _parsear_items_dom(driver: uc.Chrome) -> list[dict]:
                     continue
                 resultado.append({
                     "titulo": titulo,
-                    "badge": "",
+                    "badge": _extraer_badge_dom(link),
                     "precio_usd": "",
                     "precio_original_usd": "",
                     "costo_envio": "",
@@ -555,12 +789,19 @@ def _parsear_items_dom(driver: uc.Chrome) -> list[dict]:
                 elif 3 < len(linea) < 80:
                     lineas_sin_clasificar.append(linea)
 
-            # Priorizar líneas con keywords conocidos de badge; si no, tomar la última línea corta
+            # Priorizar líneas con programas conocidos de AliExpress.
             for candidato in lineas_sin_clasificar:
-                if re.search(r'aliexpress|choice|top venta|best seller|más vendido|mejor precio',
-                             candidato, re.IGNORECASE):
-                    badge = candidato
+                nombre = _nombre_badge(candidato)
+                if nombre:
+                    badge = nombre
                     break
+                if re.search(r'aliexpress|top venta|best seller|más vendido|mejor precio',
+                             candidato, re.IGNORECASE):
+                    badge = candidato.strip()
+                    break
+            badge_dom = _extraer_badge_dom(tarjeta)
+            if badge_dom:
+                badge = badge_dom
             if not badge and lineas_sin_clasificar:
                 badge = lineas_sin_clasificar[-1]
 
@@ -658,6 +899,7 @@ def buscar_articulos(frase: str, max_resultados: int) -> list[dict]:
                 if not items:
                     print("No se encontraron resultados.")
                     break
+                print(f"Captura offline: {_carpeta_captura(driver)}")
                 a_traer = min(total_ae, max_resultados) if total_ae else max_resultados
                 if total_ae:
                     print(f"AliExpress encontro: {total_ae:,} resultados".replace(",", "."))
