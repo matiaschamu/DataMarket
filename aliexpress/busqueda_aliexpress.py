@@ -142,7 +142,7 @@ def extraer_pagina(driver: uc.Chrome, url: str) -> list[dict]:
     _guardar_respuesta_html(driver, pagina)
 
     items = _parsear_runparams(driver)
-    if not items:
+    if not items and not getattr(driver, "_pagina_sin_resultados", False):
         items = _parsear_items_dom(driver)
 
     return items
@@ -257,6 +257,65 @@ def _extraer_numero_de_formato(item: dict, rutas: list) -> str:
         except (KeyError, TypeError):
             continue
     return ""
+
+
+def _extraer_logistica_item(item: dict) -> tuple[str, str, str]:
+    """Conserva condiciones de envio y distingue ausencia de dato de un No."""
+    logistics = item.get("logistics") or {}
+    shipping = item.get("shipping") or {}
+    if not isinstance(logistics, dict):
+        logistics = {}
+    if not isinstance(shipping, dict):
+        shipping = {}
+    tiempo = (logistics.get("deliveryDayDesc") or logistics.get("deliveryDesc") or
+              shipping.get("deliveryDayDesc") or shipping.get("deliveryDesc") or "")
+    costo = (logistics.get("deliveryFeeDesc") or logistics.get("freightFeeDesc") or
+             logistics.get("logisticsDesc") or shipping.get("freightFeeDesc") or
+             shipping.get("deliveryFeeDesc") or "")
+    textos_envio = []
+    textos_entrega = []
+    for punto in item.get("sellingPoints") or []:
+        if not isinstance(punto, dict):
+            continue
+        contenido = punto.get("tagContent") or {}
+        texto = contenido.get("tagText") or punto.get("tagText") or ""
+        if not isinstance(texto, str) or not texto.strip():
+            continue
+        fuente = _normalizar_texto_badge(punto.get("source"))
+        normalizado = _normalizar_texto_badge(texto)
+        if (any(x in fuente for x in ("shipping", "freight")) or
+                re.search(r"\b(envio|shipping|freight)\b", normalizado)):
+            if texto not in textos_envio:
+                textos_envio.append(texto)
+        elif ("delivery" in fuente or
+              re.search(r"\b(entrega|delivery)\b", normalizado)):
+            if texto not in textos_entrega:
+                textos_entrega.append(texto)
+    if not tiempo:
+        tiempo = " | ".join(textos_entrega)
+    # El texto completo conserva umbrales y otros requisitos comerciales.
+    descripciones = [str(costo)] if costo != "" else []
+    descripciones.extend(t for t in textos_envio if t not in descripciones)
+    costo = " | ".join(descripciones)
+    texto_envio = _normalizar_texto_badge(costo)
+    gratis = bool(re.search(r"\b(envio gratis|free shipping|envio gratuito)\b", texto_envio))
+    condicionado = gratis and bool(re.search(
+        r"\b(a partir|desde|superior|mayor|pedido minimo|compra minima|compras de|"
+        r"pedidos de|over|above|orders|minimum|spend|on purchases)\b", texto_envio))
+    banderas = [obj.get(campo) for obj in (logistics, shipping)
+                for campo in ("hasFreeShipping", "isFreeShipping") if campo in obj]
+    valores = [_normalizar_texto_badge(v) for v in banderas if v is not None]
+    if condicionado:
+        envio_gratis = "Condicional"
+    elif any(v in ("false", "0", "no") for v in valores):
+        envio_gratis = "No"
+    elif gratis or any(v in ("true", "1", "yes", "si") for v in valores):
+        envio_gratis = "Si"
+        if not costo:
+            costo = "0"
+    else:
+        envio_gratis = ""
+    return envio_gratis, tiempo, costo
 
 
 def _normalizar_texto_badge(valor: object) -> str:
@@ -451,10 +510,27 @@ def _guardar_debug_badges(driver, items_raw: list[dict]) -> None:
 
 def _parsear_runparams(driver: uc.Chrome) -> list[dict]:
     resultado = []
+    driver._pagina_finalizada = False
+    driver._pagina_sin_resultados = False
     data = _extraer_runparams(driver)
     if data is None:
         return []
     _guardar_respuesta_json(driver, data)
+
+    page_info = _buscar_en_rutas(data, [
+        ["data", "data", "root", "fields", "pageInfo"],
+        ["data", "root", "fields", "pageInfo"],
+        ["root", "fields", "pageInfo"],
+        ["_init_data_", "data", "data", "root", "fields", "pageInfo"],
+        ["_init_data_", "data", "root", "fields", "pageInfo"],
+    ])
+    if isinstance(page_info, dict) and page_info.get("success") is True:
+        driver._pagina_sin_resultados = page_info.get("searchResultType") == "zero_result"
+        driver._pagina_finalizada = (
+            page_info.get("finished") is True or driver._pagina_sin_resultados
+        )
+        if driver._pagina_sin_resultados:
+            return []
 
     # AliExpress anida los items en distintas rutas dependiendo de la versión
     items_raw = []
@@ -478,8 +554,13 @@ def _parsear_runparams(driver: uc.Chrome) -> list[dict]:
             obj = data
             for key in ruta:
                 obj = obj[key]
-            if isinstance(obj, list) and obj:
+            if isinstance(obj, list):
                 items_raw = obj
+                # Una lista vacía válida no habilita extraer el carrito o
+                # recomendaciones ajenas a la búsqueda mediante el fallback.
+                driver._pagina_sin_resultados = not obj
+                if not obj:
+                    driver._pagina_finalizada = True
                 break
         except (KeyError, TypeError):
             continue
@@ -540,6 +621,8 @@ def _parsear_runparams(driver: uc.Chrome) -> list[dict]:
                 ["averageStarRate"],
                 ["starRating"],
                 ["rating"],
+                ["trace", "utLogMap", "star_rating"],
+                ["trace", "custom", "utLogMap", "star_rating"],
             ])
             rating = star if star is not None else ""
 
@@ -560,39 +643,13 @@ def _parsear_runparams(driver: uc.Chrome) -> list[dict]:
                 ["tradeCount"],
                 ["orders"],
                 ["soldCount"],
-            ]) or ""
+                ["trace", "utLogMap", "real_trade_count"],
+                ["trace", "custom", "utLogMap", "real_trade_count"],
+            ])
+            pedidos = pedidos if pedidos is not None else ""
 
             # --- LOGÍSTICA ---
-            logistics = item.get("logistics", {}) or {}
-            shipping = item.get("shipping", {}) or {}
-
-            # sellingPoints puede indicar "Free shipping"
-            selling_points = item.get("sellingPoints") or []
-            sp_texts = []
-            for sp in selling_points:
-                try:
-                    t = (sp.get("tagContent", {}) or {}).get("tagText", "") or sp.get("tagText", "") or str(sp)
-                    if t:
-                        sp_texts.append(t)
-                except Exception:
-                    pass
-            tiene_free = (logistics.get("hasFreeShipping") or
-                          shipping.get("hasFreeShipping") or
-                          logistics.get("isFreeShipping") or
-                          any("free" in t.lower() or "gratis" in t.lower() for t in sp_texts))
-            envio_gratis = "Si" if tiene_free else "No"
-
-            tiempo_envio = (logistics.get("deliveryDayDesc") or
-                            logistics.get("deliveryDesc") or
-                            shipping.get("deliveryDayDesc") or "")
-
-            costo_envio = (logistics.get("deliveryFeeDesc") or
-                           logistics.get("freightFeeDesc") or
-                           logistics.get("logisticsDesc") or
-                           shipping.get("freightFeeDesc") or
-                           shipping.get("deliveryFeeDesc") or "")
-            if tiene_free and not costo_envio:
-                costo_envio = "0"
+            envio_gratis, tiempo_envio, costo_envio = _extraer_logistica_item(item)
 
             # --- BADGE ---
             badge = _extraer_badge_item(item)
@@ -620,15 +677,22 @@ def _parsear_runparams(driver: uc.Chrome) -> list[dict]:
 
             # --- IMAGEN ---
             img_obj = item.get("image", {}) or {}
+            if isinstance(img_obj, str):
+                img_obj = {"imgUrl": img_obj}
             thumbnail = (img_obj.get("imgUrl") or img_obj.get("src") or
-                         item.get("imgUrl") or item.get("productImage") or "")
+                         item.get("imgUrl") or item.get("productImage") or
+                         _buscar_en_rutas(item, [["images", 0, "imgUrl"]]) or "")
             if thumbnail and not thumbnail.startswith("http"):
                 thumbnail = "https:" + thumbnail
 
             # --- VENDEDOR ---
             store = item.get("store", {}) or {}
             vendedor = (store.get("storeName") or store.get("name") or
-                        item.get("sellerName") or item.get("storeName") or "")
+                        item.get("sellerName") or item.get("storeName") or
+                        _buscar_en_rutas(item, [
+                            ["seller", "storeName"], ["seller", "name"],
+                            ["shop", "storeName"], ["shop", "name"],
+                        ]) or "")
 
             if not titulo:
                 continue
@@ -752,7 +816,8 @@ def _parsear_items_dom(driver: uc.Chrome) -> list[dict]:
             rating = ""
             pedidos = ""
             badge = ""
-            envio_gratis = "No"
+            envio_gratis = ""
+            costo_envio = ""
 
             # Líneas que son ruido de interfaz, no datos de producto
             _ruido = re.compile(
@@ -778,7 +843,9 @@ def _parsear_items_dom(driver: uc.Chrome) -> list[dict]:
                     pedidos = linea
                 # Envío gratis
                 elif re.search(r'env[ií]o\s*gratis|free\s*ship', linea, re.IGNORECASE):
-                    envio_gratis = "Si"
+                    envio_gratis, _, costo_envio = _extraer_logistica_item({
+                        "sellingPoints": [{"tagText": linea}]
+                    })
                 # Descartar ruido de UI y líneas de descuento de nuevo comprador
                 elif _ruido.search(linea) or _nuevo_comprador.match(linea):
                     pass
@@ -825,7 +892,7 @@ def _parsear_items_dom(driver: uc.Chrome) -> list[dict]:
                 "badge": badge,
                 "precio_usd": precio,
                 "precio_original_usd": precio_original,
-                "costo_envio": "",
+                "costo_envio": costo_envio,
                 "envio_gratis": envio_gratis,
                 "tiempo_envio": "",
                 "pedidos": pedidos,
@@ -846,6 +913,9 @@ def obtener_total_resultados(driver: uc.Chrome) -> int:
         data = _extraer_runparams(driver)
         if data:
             for ruta in [
+                ["data", "root", "fields", "pageInfo", "totalResults"],
+                ["root", "fields", "pageInfo", "totalResults"],
+                ["_init_data_", "data", "root", "fields", "pageInfo", "totalResults"],
                 ["data", "data", "root", "fields", "pageInfo", "totalResults"],
                 ["data", "data", "root", "fields", "paginationResult", "totalResults"],
                 ["_init_data_", "data", "data", "root", "fields", "pageInfo", "totalResults"],
@@ -884,6 +954,7 @@ def buscar_articulos(frase: str, max_resultados: int) -> list[dict]:
 
     driver = crear_driver()
     articulos = []
+    vistos = set()
     total_ae = 0
 
     try:
@@ -909,7 +980,22 @@ def buscar_articulos(frase: str, max_resultados: int) -> list[dict]:
             if not items:
                 break
 
-            articulos.extend(items)
+            nuevos = []
+            for item in items:
+                clave = item.get("link")
+                if clave:
+                    # El mismo producto puede cambiar de dominio o parámetros.
+                    producto = re.search(r"/item/(\d+)\.html", clave)
+                    clave = producto.group(1) if producto else clave.split("?")[0]
+                else:
+                    clave = (item.get("titulo"), item.get("precio_usd"), item.get("vendedor"))
+                if clave not in vistos:
+                    vistos.add(clave)
+                    nuevos.append(item)
+            if not nuevos:
+                print("\nLa página no contiene productos nuevos. Fin de la búsqueda.")
+                break
+            articulos.extend(nuevos)
 
             if len(articulos) >= max_resultados:
                 articulos = articulos[:max_resultados]
@@ -924,6 +1010,10 @@ def buscar_articulos(frase: str, max_resultados: int) -> list[dict]:
             porcentaje = min(int(obtenidos / meta * 100), 100) if meta else 0
             barra = "#" * (porcentaje // 5) + "-" * (20 - porcentaje // 5)
             print(f"[{barra}] {obtenidos}/{meta} ({porcentaje}%)", end="\r")
+
+            if getattr(driver, "_pagina_finalizada", False):
+                print("\nAliExpress indicó que no hay más resultados.")
+                break
 
             pagina += 1
     finally:

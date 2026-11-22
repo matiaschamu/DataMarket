@@ -13,6 +13,7 @@ __pycache__/
 debug_*.json
 debug_*.html
 debug_aliexpress/
+debug_mercadolibre/
 
 # Tokens y credenciales
 .ml_token.json

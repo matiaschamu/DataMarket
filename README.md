@@ -84,10 +84,21 @@ AZ_auriculares_bluetooth_20260522_160500.csv  ← Amazon
 | `vendedor_nickname` | Nombre del vendedor |
 | `cuotas` | Cantidad de cuotas disponibles |
 | `valor_cuota` | Monto por cuota |
+| `full` | Si / No, según la etiqueta Full visible |
+| `tiene_cupon` | Si / No |
+| `cupones` | Texto de los cupones disponibles |
+| `promociones` | Descuentos y promociones visibles |
+| `beneficios` | Resumen de Full, envío gratis, cupones y promociones |
 | `rating` | Calificación promedio (ej: 4.8) |
 | `cantidad_reseñas` | Número total de reseñas |
 | `link` | URL del artículo |
 | `thumbnail` | URL de la imagen principal |
+
+Cada búsqueda también crea una captura local en
+`debug_mercadolibre/AAAAMMDD_HHMMSS/`, con el HTML, una imagen y los datos
+interpretados de cada página, además de `debug_busqueda.json`. Estas capturas
+sirven para investigar cambios de MercadoLibre y pueden contener datos de la
+sesión iniciada, por lo que están excluidas de Git.
 
 ---
 
@@ -99,8 +110,8 @@ AZ_auriculares_bluetooth_20260522_160500.csv  ← Amazon
 | `badge` | Etiqueta destacada (ej: "Top ventas", "Ahorra $X") |
 | `precio_usd` | Precio de venta |
 | `precio_original_usd` | Precio antes del descuento (si aplica) |
-| `costo_envio` | Costo de envío (0 si es gratis) |
-| `envio_gratis` | Si / No |
+| `costo_envio` | Costo o texto de envío con sus condiciones; 0 si se confirma gratis sin texto adicional |
+| `envio_gratis` | Si / No / Condicional; vacío si no está informado |
 | `tiempo_envio` | Estimación de entrega |
 | `pedidos` | Cantidad de ventas (ej: "4.000+ vendidos") |
 | `rating` | Calificación promedio (ej: 4.8) |
@@ -108,6 +119,12 @@ AZ_auriculares_bluetooth_20260522_160500.csv  ← Amazon
 | `vendedor` | Nombre de la tienda |
 | `link` | URL del artículo |
 | `thumbnail` | URL de la imagen principal |
+
+AliExpress no siempre publica todos estos datos en las tarjetas de búsqueda.
+Los campos ausentes quedan vacíos: no se inventan vendedores, reseñas, plazos ni
+precios originales. `pedidos` representa ventas, no cantidad de reseñas.
+Cuando el envío gratis exige un importe mínimo, `envio_gratis` dice `Condicional`
+y `costo_envio` conserva el texto completo del requisito.
 
 ---
 

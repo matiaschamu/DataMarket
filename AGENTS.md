@@ -59,6 +59,102 @@ Los programas usan `undetected_chromedriver` con un perfil persistente `.perfil_
 
 `detectar_version_principal_chrome()` determina la versión principal instalada. No volver a fijar un número de Chrome manualmente salvo que exista una razón comprobada.
 
+## MercadoLibre: búsqueda y extracción
+
+La ausencia del contador total no significa que una búsqueda esté vacía. MercadoLibre
+puede cambiar u ocultar `.ui-search-search-result__quantity-results` aunque las
+tarjetas se hayan cargado. La búsqueda sólo debe informar cero resultados cuando la
+primera página no produce artículos. Si hay tarjetas y no hay contador, continuar
+hasta el máximo solicitado o hasta encontrar una página vacía.
+
+La presencia del contador tampoco garantiza que las tarjetas ya estén listas. En la
+captura `mercadolibre/dist/debug_mercadolibre/20260905_124437/`, el contador mostraba
+1.730 resultados pero la página seguía en el spinner: había cero productos LDJSON y
+cero tarjetas DOM. `extraer_pagina()` debe esperar explícitamente tarjetas o una
+pantalla vacía; si vence la espera, refrescar una vez y volver a esperar antes de
+declarar que no hay resultados. Registrar el número de reintentos en las capturas.
+
+La extracción combina los productos de `application/ld+json` con los datos visibles
+del DOM. El DOM es también el fallback cuando no existe una lista LDJSON válida. Los
+contenedores pueden representar varias veces la misma tarjeta; deduplicar por `id`,
+`link` o, como último recurso, título, precio y vendedor.
+
+Las páginas Nordic también serializan tarjetas completas como objetos escapados con
+`{"id":"POLYCARD","state":"VISIBLE","polycard":...}`. Esta fuente debe
+parsearse con `_parsear_polycards_embebidas()` y usarse cuando el LDJSON no existe,
+incluso si la interfaz sigue mostrando el spinner y el DOM no contiene tarjetas. La
+captura fallida `20260905_125019` permitió recuperar 57 publicaciones únicas de este
+bloque: 14 Full, 27 con envío gratis y 6 con cupón.
+
+El CSV de MercadoLibre separa las señales comerciales en estas columnas:
+
+- `full`: `Si` / `No` según la etiqueta Full visible o el tipo logístico conocido.
+- `envio_gratis`: `Si` / `No` según el texto o atributo semántico visible.
+- `tiene_cupon`: `Si` / `No`.
+- `cupones`: texto completo de los cupones visibles.
+- `promociones`: descuentos y promociones visibles que no sean cupones.
+- `beneficios`: resumen combinado de las señales anteriores.
+
+Para detectar beneficios, revisar elementos de envío, cupones, promociones, badges y
+sus atributos `aria-label`, `title` y `alt`. Evitar inferir Full sólo porque la palabra
+aparece dentro del título de un producto. Los nodos anidados pueden repetir una
+etiqueta; conservar la variante más completa, por ejemplo `$ 5.000 OFF con Cupón` en
+lugar de guardar además `OFF con Cupón`.
+
+## Capturas offline de MercadoLibre
+
+Cada búsqueda crea una carpeta fechada junto al script o ejecutable que se lanzó:
+
+```text
+debug_mercadolibre/YYYYMMDD_HHMMSS/
+├── pagina_001.html
+├── pagina_001.png
+├── pagina_001.json
+├── pagina_002.html
+├── pagina_002.png
+├── pagina_002.json
+└── debug_busqueda.json
+```
+
+- Al ejecutar el `.exe`, la ruta queda bajo `mercadolibre/dist/debug_mercadolibre/`.
+- Al ejecutar el fuente, queda bajo `mercadolibre/debug_mercadolibre/`.
+- `pagina_NNN.html` conserva el DOM completo.
+- `pagina_NNN.png` muestra lo que renderizó el navegador.
+- `pagina_NNN.json` conserva URL solicitada y final, total visible, LDJSON crudo,
+  artículos interpretados por LDJSON, artículos interpretados por DOM y resultado
+  final combinado.
+- `debug_busqueda.json` registra frase, fechas, máximo solicitado, total informado,
+  páginas capturadas, artículos devueltos y cualquier error de ejecución.
+
+Estas capturas pueden contener cookies indirectas, identificadores técnicos de
+sesión, telemetría o información personalizada. Están ignoradas por Git, no deben
+publicarse y deben preservarse localmente para futuras investigaciones salvo que el
+usuario pida borrarlas.
+
+Para investigar una búsqueda vacía o un beneficio incorrecto:
+
+1. Elegir la captura más reciente y abrir `debug_busqueda.json`.
+2. Revisar `url_final`, los contadores y `resultado` en `pagina_NNN.json`.
+3. Comparar `items_ldjson` con `items_dom` para localizar dónde se perdió el dato.
+4. Confirmar la etiqueta en `pagina_NNN.png` y su representación en el HTML.
+5. Corregir con señales semánticas y validar casos positivos, negativos y ausentes.
+
+## Auditoría de referencia: búsqueda `lanza pelotas`
+
+Captura validada: `mercadolibre/debug_mercadolibre/20260905_124128/`.
+
+- MercadoLibre informó 1.730 resultados.
+- La primera página produjo 48 productos LDJSON, 49 tarjetas DOM deduplicadas y 48
+  resultados finales.
+- La captura PNG se guardó correctamente y no hubo error de ejecución.
+- La prueba pidió un solo resultado, por eso `debug_busqueda.json` registra un
+  artículo extraído aunque `pagina_001.json` contenga los 48 resultados de la página.
+- La búsqueda confirmó ejemplos reales con Full, envío gratis y cupones.
+
+Esta auditoría confirma el comportamiento observado el 5 de septiembre de 2026. Las
+promociones pueden cambiar después; ante una diferencia, usar siempre la captura de
+la ejecución reportada antes de modificar el parser.
+
 ## AliExpress: estrategia de extracción
 
 La búsqueda carga la página, hace scroll para hidratar tarjetas y sigue este orden:
